@@ -1,3 +1,3 @@
-# STA380
+# MSBA
 
-Testing new readme file for STA380
+This repository includes all homework uploads for the Summer II session for MSBA.
