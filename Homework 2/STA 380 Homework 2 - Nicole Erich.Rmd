@@ -1,0 +1,548 @@
+---
+title: 'STA 380 Homework 2: Nicole Erich'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Packages required: tm, ggplot2, arules, reshape2, grid, e1071, nnet**
+
+##Question 1: Flights at ABIA
+
+```{r include = FALSE}
+library(ggplot2)
+library(reshape2)
+library(gridExtra)
+library(e1071)
+
+abia = read.csv("Data/ABIA.csv")
+
+abia[is.na(abia)] = 0
+
+aus_arrivals = abia[abia$Dest== "AUS",]
+aus_depart = abia[abia$Dest!= "AUS",]
+
+aus_arrivals = cbind(aus_arrivals, aus_arrivals$CarrierDelay + aus_arrivals$WeatherDelay + aus_arrivals$NASDelay + aus_arrivals$SecurityDelay + aus_arrivals$LateAircraftDelay)
+colnames(aus_arrivals) = c(colnames(aus_arrivals)[1:length(colnames(aus_arrivals))-1],"TotalDelay")
+
+aus_depart = cbind(aus_depart, aus_depart$CarrierDelay + aus_depart$WeatherDelay + aus_depart$NASDelay + aus_depart$SecurityDelay + aus_depart$LateAircraftDelay)
+colnames(aus_depart) = c(colnames(aus_depart)[1:length(colnames(aus_depart))-1],"TotalDelay")
+```
+
+```{r include = FALSE}
+
+## Function from http://www.cookbook-r.com/Manipulating_data/Summarizing_data/
+## Summarizes data.
+## Gives count, mean, standard deviation, standard error of the mean, and confidence interval (default 95%).
+##   data: a data frame.
+##   measurevar: the name of a column that contains the variable to be summariezed
+##   groupvars: a vector containing names of columns that contain grouping variables
+##   na.rm: a boolean that indicates whether to ignore NA's
+##   conf.interval: the percent range of the confidence interval (default is 95%)
+summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
+                      conf.interval=.95, .drop=TRUE) {
+    library(plyr)
+
+    # New version of length which can handle NA's: if na.rm==T, don't count them
+    length2 <- function (x, na.rm=FALSE) {
+        if (na.rm) sum(!is.na(x))
+        else       length(x)
+    }
+
+    # This does the summary. For each group's data frame, return a vector with
+    # N, mean, and sd
+    datac <- ddply(data, groupvars, .drop=.drop,
+      .fun = function(xx, col) {
+        c(N    = length2(xx[[col]], na.rm=na.rm),
+          mean = mean   (xx[[col]], na.rm=na.rm),
+          sd   = sd     (xx[[col]], na.rm=na.rm)
+        )
+      },
+      measurevar
+    )
+
+    # Rename the "mean" column    
+    datac <- rename(datac, c("mean" = measurevar))
+
+    datac$se <- datac$sd / sqrt(datac$N)  # Calculate standard error of the mean
+
+    # Confidence interval multiplier for standard error
+    # Calculate t-statistic for confidence interval: 
+    # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+    ciMult <- qt(conf.interval/2 + .5, datac$N-1)
+    datac$ci <- datac$se * ciMult
+
+    return(datac)
+}
+
+# Function to predict multinomial logit choice model outcomes
+# model = nnet class multinomial model
+# newdata = data frame containing new values to predict
+predictMNL <- function(model, newdata) {
+ 
+  # Only works for neural network models
+  if (is.element("nnet",class(model))) {
+    # Calculate the individual and cumulative probabilities
+    probs <- predict(model,newdata,"probs")
+    cum.probs <- t(apply(probs,1,cumsum))
+ 
+    # Draw random values
+    vals <- runif(nrow(newdata))
+ 
+    # Join cumulative probabilities and random draws
+    tmp <- cbind(cum.probs,vals)
+ 
+    # For each row, get choice index.
+    k <- ncol(probs)
+    ids <- 1 + apply(tmp,1,function(x) length(which(x[1:k] < x[k+1])))
+ 
+    # Return the values
+    return(ids)
+  }
+}
+
+# The color-blind friendly palette with grey:
+cbPalette = c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+longhornPalette1 = c("#BF5700","#333F48","#005F86")
+longhornPalette2 = c("#F2A900", "#D6D2C4", "#43695B")
+```
+
+```{r include = FALSE}
+
+#inbound graph
+aas = summarySE(aus_arrivals, measurevar = "TotalDelay", groupvars = "UniqueCarrier")
+
+arr_plot = ggplot(aas, aes(x = reorder(UniqueCarrier, -TotalDelay), y = TotalDelay)) +
+  geom_bar(position = position_dodge(),stat="identity")+
+  scale_fill_manual(values= c("#BF5700","#333F48"))+
+  geom_errorbar(aes(ymin=TotalDelay-se,ymax=TotalDelay+se),
+                width = 0.2,
+                position = position_dodge(.9))+
+  labs(title = "Average Annual Delays by Carrier\n(Inbound to AUS)", x = "Carrier Code", y = "Average Delay in Minutes")
+
+#outbound graph
+ads = summarySE(aus_depart, measurevar = "TotalDelay", groupvars = "UniqueCarrier")
+
+dep_plot = ggplot(ads, aes(x = reorder(UniqueCarrier, -TotalDelay), y = TotalDelay)) +
+  geom_bar(position = position_dodge(),stat="identity")+
+  scale_fill_manual(values= c("#BF5700","#333F48"))+
+  geom_errorbar(aes(ymin=TotalDelay-se,ymax=TotalDelay+se),
+                width = 0.2,
+                position = position_dodge(.9))+
+  labs(title = "Average Annual Delays by Carrier\n(Outbound from AUS)", x = "Carrier Code", y = "Average Delay in Minutes")
+```
+
+```{r echo = FALSE}
+grid.arrange(arr_plot,dep_plot, ncol = 2)
+```
+
+<br>The plots above show the annual average delays per flight carrier, separated by inbound and outbound flights related to Austin, Texas.  Each bar shows the average total delay in minutes (including all delay categories), and there is a standard error bar applied to each carrier.  
+
+For both graphs, the right side of the graph (carriers with lower average annual delays) seems to have a tighter error range on average, while those carriers clocking in at higher delays also have larger error ranges. 
+
+Some carriers are in different orders from arrivals to departures.  How do carriers rank against one another in arrivals vs. departures?<br><br><br>
+
+```{r include = FALSE}
+# See what is different between arrival and departure
+arrivals_rank = aas[order(aas$TotalDelay, decreasing = TRUE),]
+rownames(arrivals_rank) = 1:nrow(arrivals_rank)
+depart_rank = ads[order(ads$TotalDelay, decreasing = TRUE),]
+rownames(depart_rank) = 1:nrow(depart_rank)
+
+# create ranking dataframe from arrivals
+both_ranks = data.frame(arrivals_rank$UniqueCarrier,rep(c(0),nrow(arrivals_rank)), rep(c(0),nrow(arrivals_rank)))
+colnames(both_ranks) = c("UniqueCarrier","ArrivalRank","DepartRank")
+both_ranks$ArrivalRank = rownames(both_ranks)
+
+# set depart ranks
+for(i in 1:nrow(both_ranks)){
+  both_ranks[i,3] = which(depart_rank$UniqueCarrier == both_ranks[i,1])
+}
+
+both_ranks_diff = data.frame(both_ranks,as.numeric(both_ranks$ArrivalRank)-as.numeric(both_ranks$DepartRank))
+colnames(both_ranks_diff) = c(colnames(both_ranks),"Difference")
+
+
+# Positive Arrival - Departure, delay time INCREASES
+increased_long = melt(both_ranks_diff[both_ranks_diff$Difference >0,], id.vars = "UniqueCarrier", measure.vars = c("ArrivalRank", "DepartRank"), variable.name = "FlightType")
+
+# Negative Arrival - Departure, delay time DECREASES
+decreased_long = melt(both_ranks_diff[both_ranks_diff$Difference <0,], id.vars = "UniqueCarrier", measure.vars = c("ArrivalRank", "DepartRank"), variable.name = "FlightType")
+
+# Neutral Arrival - Departure, delay time Stays the same
+neutral_long = melt(both_ranks_diff[both_ranks_diff$Difference ==0,], id.vars = "UniqueCarrier", measure.vars = c("ArrivalRank", "DepartRank"), variable.name = "FlightType")
+
+# Plot the delay for departures is longer than arrivals                   
+inc_plot = ggplot(increased_long, aes(x = FlightType, y = as.numeric(value), group = UniqueCarrier, color = UniqueCarrier))+
+  geom_line(size = 1) + 
+  geom_point(shape = 21, fill = "white")+
+  scale_colour_manual(values=cbPalette)+
+  scale_y_continuous("",limits = c(0,17),breaks = seq(0,17,by =1), labels = seq(0,17,by =1))+
+  scale_x_discrete("", labels = c("Arrive", "Depart"))+
+  theme(legend.position = "bottom", legend.direction = "horizontal",legend.text=element_text(size=6),legend.title=element_blank())
+
+# Plot the delay for departures is shorter than arrivals                   
+dec_plot = ggplot(decreased_long, aes(x = FlightType, y = as.numeric(value), group = UniqueCarrier, color = UniqueCarrier))+
+  geom_line(size = 1) + 
+  geom_point(shape = 21, fill = "white")+
+  scale_colour_manual(values=cbPalette)+
+  scale_y_continuous("",limits = c(0,17),breaks = seq(0,17,by =1), labels = seq(0,17,by =1))+
+  scale_x_discrete("", labels = c("Arrive", "Depart"))+
+  theme(legend.position = "bottom", legend.direction = "horizontal",legend.text=element_text(size=6),legend.title=element_blank())
+
+# Plot the delay for departures is equal to arrivals                   
+neut_plot = ggplot(neutral_long, aes(x = FlightType, y = as.numeric(value), group = UniqueCarrier, color = UniqueCarrier))+
+  geom_line(size = 1) + 
+  geom_point(shape = 21, fill = "white")+
+  scale_colour_manual(values=cbPalette)+
+  scale_y_continuous("",limits = c(0,17),breaks = seq(0,17,by =1), labels = seq(0,17,by =1))+
+  scale_x_discrete("", labels = c("Arrive", "Depart"))+
+  theme(legend.position = "bottom", legend.direction = "horizontal",legend.text=element_text(size=6),legend.title=element_blank())
+```
+
+```{r echo = FALSE}
+grid.arrange(top ="Carrier Ranking in Average Delay Times\nFor Arrivals and Departures", left = "Rank\n(1 is longest delay, 16 is shortest delay)", inc_plot,dec_plot, neut_plot, ncol =3)
+
+```
+<br>Carriers F9, US, and WN consistently have the shortest delays for both arrivals and departures.  Depending on the priority, different airlines seem to fair better keeping to the schedule arriving in Austin or departing from Austin.
+
+If a person is leaving Austin to go to an event (conference, wedding, family reunion) in another city, he or she will probably be more concerned about arriving to that destination on time, rather than the time s/he returns home in a few days.  
+
+In that case, the safest options would be the carriers US, F9, WN as a first choice. Second choice options would be 9E, XE, or AA.  These three airlines will see a longer delay, on average, returning to Austin, but will be relatively good at minimizing delays on the outbound flights.<br><br><br>
+
+Which airline and time of the year is the safest bet to reduce delays leaving Austin?  In this case, money is no object as long as a person can guarantee to the family that s/he will not be late to the reunion this time.<br><br>
+
+```{r include = FALSE}
+choice1_carriers = c("US","F9","WN")
+choice2_carriers = c("9E","XE","AA")
+
+choice1_departs = aus_depart[aus_depart$UniqueCarrier %in% choice1_carriers,]
+choice2_departs = aus_depart[aus_depart$UniqueCarrier %in% choice2_carriers,]
+
+ch1_s = summarySE(choice1_departs, measurevar = "TotalDelay", groupvars = c("UniqueCarrier", "Month"))
+ch2_s = summarySE(choice2_departs, measurevar = "TotalDelay", groupvars = c("UniqueCarrier", "Month"))
+
+ch1_plot = ggplot(ch1_s, aes(x = as.factor(Month), y = TotalDelay, colour = UniqueCarrier, group = UniqueCarrier))+
+  scale_colour_manual(values=cbPalette)+
+  geom_line(position = position_dodge(0.1), size = 1)+
+  geom_point(position = position_dodge(0.1), size = 3)+
+  scale_x_discrete("Month", labels = c("J", "F","M","A","M","J","J","A","S","O","N","D"))+
+  scale_y_continuous("",limits = c(0,20))+
+  labs(title = "First Choice Carriers")+
+  theme_light()+
+  theme(panel.background = element_blank(),legend.position = "bottom", legend.direction = "horizontal",legend.text=element_text(size=6),legend.title=element_blank())
+  
+  
+ch2_plot = ggplot(ch2_s, aes(x = as.factor(Month), y = TotalDelay, colour = UniqueCarrier, group = UniqueCarrier))+
+  scale_colour_manual(values=cbPalette)+
+  geom_line(position = position_dodge(0.1), size = 1)+
+  geom_point(position = position_dodge(0.1), size = 3)+
+  scale_x_discrete("Month", labels = c("J", "F","M","A","M","J","J","A","S","O","N","D"))+
+  scale_y_continuous("",limits = c(0,20))+
+  labs(title = "Second Choice Carriers")+
+  theme_light()+
+  theme(panel.background = element_blank(),legend.position = "bottom", legend.direction = "horizontal",legend.text=element_text(size=6),legend.title=element_blank())
+
+test_dep = aus_depart[aus_depart$UniqueCarrier =="XE",c('Month','TotalDelay')]
+nrow(test_dep[test_dep$Month == 12,])
+
+```
+
+```{r echo = FALSE}
+grid.arrange(left = "Average Total Delay (mins)", ch1_plot,ch2_plot, ncol =2)
+```
+<br>For consistently low average delays throughout the year, US is the clear winner.  Even during the peak delay months for other airlines (March, June, and December), US manages to keep its outbound delays fairly low and stable.  
+
+If the reunion is in September, October, or November, it may be worthwhile to consider F9.  Also, although there is no data for October and November for XE, in 2008 it had 0 delays over 17 flights in December.  This may be a trend worth investigating for someone flying in December, especially as XE may be looked over by other delay-wary passengers, who would likely choose F9 or US.
+
+
+## Question 2: Author Attribution
+
+```{r include = FALSE}
+library(tm) 
+
+
+# Borrow function to read in english
+readerPlain = function(fname){
+				readPlain(elem=list(content=readLines(fname)), 
+							id=fname, language='en') 
+}
+```
+
+
+```{r include = FALSE}
+# Read in training data
+file_list = Sys.glob('Data/ReutersC50/C50train/*/*.txt')
+authors = lapply(file_list, readerPlain) 
+
+# Read in test data
+file_list_test = Sys.glob('Data/ReutersC50/C50test/*/*.txt')
+authors_test = lapply(file_list_test, readerPlain) 
+
+# Simplify training document names
+names(authors) = file_list
+names(authors) = substring(names(authors),first=25) #gets rid of the file path
+names(authors) = sub('.txt', '', names(authors))
+
+# Simplify test document names
+names(authors_test) = file_list_test
+names(authors_test) = substring(names(authors_test),first=24) #gets rid of the file path
+names(authors_test) = sub('.txt', '', names(authors_test))
+
+# Create a corpus of training documents
+my_documents = Corpus(VectorSource(authors))
+names(my_documents) = names(authors)
+
+# Create a corpus of test documents
+test_docs = Corpus(VectorSource(authors_test))
+names(test_docs) = names(authors_test)
+
+# Complete training tokenization for case, numbers, punctuation, white space, stop words
+my_documents = tm_map(my_documents, content_transformer(tolower))
+my_documents = tm_map(my_documents, content_transformer(removeNumbers))
+my_documents = tm_map(my_documents, content_transformer(removePunctuation))
+my_documents = tm_map(my_documents, content_transformer(stripWhitespace))
+my_documents = tm_map(my_documents, content_transformer(removeWords), stopwords("en"))
+
+# Complete test tokenization for case, numbers, punctuation, white space, stop words
+test_docs = tm_map(test_docs, content_transformer(tolower))
+test_docs = tm_map(test_docs, content_transformer(removeNumbers))
+test_docs = tm_map(test_docs, content_transformer(removePunctuation))
+test_docs = tm_map(test_docs, content_transformer(stripWhitespace))
+test_docs = tm_map(test_docs, content_transformer(removeWords), stopwords("en"))
+
+# Convert to document term matrix (DTM)
+DTM_authors = DocumentTermMatrix(my_documents)
+DTM_authors = removeSparseTerms(DTM_authors, 0.9)
+
+# Convert to document term matrix (DTM)
+DTM_test = DocumentTermMatrix(test_docs)
+DTM_test = removeSparseTerms(DTM_test, 0.9)
+
+x_train = as.matrix(DTM_authors)
+x_test = as.matrix(DTM_test)
+```
+
+
+```{r include = FALSE}
+# Adapt levels for training data
+names_train = colnames(x_train)
+names_test = colnames(x_test)
+
+missing_words = which(!(names_test %in% names_train))
+
+# Add additional columns to x_train with all 0's
+for(i in missing_words){
+  word = names_test[i]
+  x_train = cbind(x_train,rep(0,nrow(x_train)))
+  colnames(x_train)[ncol(x_train)] = word
+}
+
+# Adapt levels for test data
+extra_words = which(!(names_train %in% names_test))
+
+# Add additional columns to x_test with all 0's
+for(i in extra_words){
+  word = names_train[i]
+  x_test = cbind(x_test,rep(0,nrow(x_test)))
+  colnames(x_test)[ncol(x_test)] = word
+}
+
+# Sort columns
+x_train = x_train[,order(colnames(x_train))]
+x_test = x_test[,order(colnames(x_test))]
+
+```
+
+
+```{r include = FALSE}
+# Get authors for train
+file_names = rownames(x_train)
+author_names = vector(mode="character",length = length(file_names))
+for (i in 1:length(file_names)){
+  temp_name = strsplit(file_names[i],'/') # Split the file name by the /
+  author_names[i] = temp_name[[1]][2] # Author name is the always the 2nd element
+}
+
+# Get authors for test
+test_names = rownames(x_test)
+author_test = vector(mode="character",length = length(test_names))
+for (i in 1:length(test_names)){
+  temp_name = strsplit(test_names[i],'/') # Split the file name by the /
+  author_test[i] = temp_name[[1]][2] # Author name is the always the 2nd element
+}
+
+x_train = data.frame(author_names,x_train)
+x_test = data.frame(author_test, x_test)
+colnames(x_train) = c("Author", colnames(x_train)[2:length(colnames(x_train))])
+colnames(x_test) = c("Author", colnames(x_test)[2:length(colnames(x_test))])
+
+```
+
+```{r include = FALSE}
+# Create smoothing factor
+smooth_count = 1/nrow(x_train)
+
+#Get unique author names
+authors_dedup = unique(author_names)
+w_train = matrix(nrow=length(authors_dedup),ncol = length(colnames(x_train))-1)
+colnames(w_train) = colnames(x_train)[2:length(colnames(x_train))]
+rownames(w_train) = authors_dedup
+
+# Create multinomial probability vector for each author
+for(name in authors_dedup){
+  x_temp = x_train[which(x_train$Author == name),]
+  w_temp = colSums(x_temp[,2:length(colnames(x_train))] + smooth_count)
+  w_temp = w_temp/sum(w_temp)
+  w_train[name,] = w_temp
+}
+
+```
+
+
+```{r include = FALSE}
+# Naive Bayes model
+
+library(e1071)
+model1 = naiveBayes(Author ~., data = x_train)
+predict = predict(model1, x_test[,-1])
+
+```
+
+```{r include = FALSE}
+# Who did we get right?
+correct_names = table(predict[which(predict == x_test$Author)])
+top_names = correct_names[correct_names >= 5]
+top_names = top_names[order(top_names, decreasing=TRUE)]
+```
+
+Naive Bayes model, sparcity at 90%.  Able to correctly predict `r 100.0*sum(predict == x_test$Author)/length(predict)`% of articles' authors correctly.  
+
+The model predicted the following authors correctly more than 10% of their test set articles.  
+
+```{r echo = FALSE}
+
+normal_settings = par()
+par(mar = c(9,4,4,2))
+barplot(height = top_names, ylab = "Num. Correct", main = "Correctly Predicted Authors > 10%", axes = TRUE, axisnames = TRUE, las = 2, cex.names = 0.8)
+par(mar = normal_settings$mar)
+
+# Get ordered list of most commonly predicted author
+common_pred = table(predict)[order(table(predict), decreasing = TRUE)]
+
+# Get dataframe of predictions, actuals, and frequency
+matches = data.frame(predict, x_test$Author, rep(1,length(predict)))
+colnames(matches) = c("predictions", "actual","freq")
+
+# Create level ordering with most commonly predicted
+matches$predictions = factor(matches$predictions, levels = names(common_pred))
+
+# Aggregate common predictions
+matches = aggregate(freq~predictions+actual,data = matches, FUN = sum)
+
+# Sort
+matches = matches[order(matches$predictions,matches$freq),]
+mask = common_pred[common_pred >100]
+mask2 = matches$predictions %in% names(mask)
+matches = matches[mask2,]
+
+check = matches$predictions == matches$actual
+check[check == TRUE] = "Match"
+check[check == FALSE] = "No Match"
+matches = data.frame(matches,check)
+
+ggplot(matches, aes(x = predictions, y = freq, group = actual, fill = check))+ 
+  scale_fill_manual(values= c("#BF5700","#333F48"))+
+  geom_bar(stat = "identity", colour = "black")+
+  labs(title = "Most Commonly Predicted Authors", x = "", y = "Number of Predictions")
+```
+
+For Naive Bayes, Peter Humphrey was predicted the most often, for many different authors. The most times he was predicted was for his own articles, as is the case for Aaron Pressman and Roger Fillion/  Benjamin Kang Lim and David Lawder, however, were actually predicted more frequently for different authors than for themselves.
+
+```{r include = FALSE}
+
+# Multinomial Logistic Regression Model
+
+library(nnet)
+w_train_author = rownames(w_train)
+w_train_author = data.frame(w_train_author,w_train[,-1])
+colnames(w_train_author) = c("Author",colnames(w_train)[-1])
+
+
+model2 = multinom(Author ~.,data = w_train_author, MaxNWts = 19000, maxit = 10)
+predict2 = predict(model2, type="probs", newdata=x_test[,-1])
+
+predict_authors = vector(mode="character",length = nrow(predict2))
+for(i in 1:nrow(predict2)){
+  predict_authors[i] = colnames(predict2)[which.max(predict2[i,])]
+}
+
+100.0*sum(predict_authors == x_test$Author)/length(predict_authors)
+```
+
+```{r include = FALSE}
+# Who did we get right?
+correct_names = table(predict_authors[which(predict_authors == x_test$Author)])
+top_names = correct_names[correct_names >= 5]
+top_names = top_names[order(top_names, decreasing=TRUE)]
+```
+
+Multinomial logistic regression was able to correctly predict `r 100.0*sum(predict_authors == x_test$Author)/length(predict_authors)`% of articles' authors.  
+
+The model predicted the following authors correctly more than 10% of their test set articles.  
+
+```{r echo = FALSE}
+
+normal_settings = par()
+par(mar = c(9,4,4,2))
+barplot(height = top_names, ylab = "Num. Correct", main = "Correctly Predicted Authors > 10%", axes = TRUE, axisnames = TRUE, las = 2, cex.names = 0.8)
+par(mar = normal_settings$mar)
+
+```
+
+
+## Question 3: Groceries
+
+
+```{r include = FALSE}
+library(arules)
+groceries_raw = read.transactions("Data/groceries.txt", format = 'basket', sep = ',')
+```
+
+#####**What are the more popular items?**
+
+```{r include = FALSE}
+groceries_rules = apriori(groceries_raw, parameter=list(support=.01, confidence=.5, maxlen=3))
+groceries_df = as(groceries_rules, "data.frame")
+groc_support = tail(groceries_df[order(groceries_df$support),])
+```
+<center>
+Rule                       | Support | Confidence | Lift
+-------------------------- | ------- | ---------- | --------
+`r groc_support[6,'rules']` | `r round(groc_support[6,'support'],4)` | `r round(groc_support[6,'confidence'],4)` | `r round(groc_support[6,'lift'],4)`
+`r groc_support[5,'rules']` | `r round(groc_support[5,'support'],4)` | `r round(groc_support[5,'confidence'],4)` | `r round(groc_support[5,'lift'],4)`
+`r groc_support[4,'rules']` | `r round(groc_support[4,'support'],4)` | `r round(groc_support[4,'confidence'],4)` | `r round(groc_support[4,'lift'],4)`
+</center>
+
+The more "popular" baskets of customers are all very practical; these are shoppers on a mission.  They are stocking up on essentials like fruits, veggies, yogurt, and milk.  With slightly more than 50% of customers who have the first items in their baskets also purchasing whole milk, it is a good idea to leverage this trend in groceries stores.  This analysis supports the store layout methodology to keep milk at the back of the store.  When the "fruits and veggies" customers are more than likely to seek out milk as well, it makes sense to have them walk past as many other options as possible on the way.<br><br>
+
+#####**What are some interesting trends?**
+```{r include = FALSE} 
+groceries_rules = apriori(groceries_raw, parameter=list(support=.001, confidence=.5, maxlen=3))
+groceries_df = as(groceries_rules, "data.frame")
+groc_lift = tail(groceries_df[order(groceries_df$lift),],n=6)
+```
+<center>
+Rule                       | Support | Confidence | Lift
+-------------------------- | ------- | ---------- | --------
+`r groc_lift[6,'rules']` | `r round(groc_lift[6,'support'],4)` | `r round(groc_lift[6,'confidence'],4)` | `r round(groc_lift[6,'lift'],4)`
+`r groc_lift[5,'rules']` | `r round(groc_lift[5,'support'],4)` | `r round(groc_lift[5,'confidence'],4)` | `r round(groc_lift[5,'lift'],4)`
+`r groc_lift[4,'rules']` | `r round(groc_lift[4,'support'],4)` | `r round(groc_lift[4,'confidence'],4)` | `r round(groc_lift[4,'lift'],4)`
+`r groc_lift[3,'rules']` | `r round(groc_lift[3,'support'],4)` | `r round(groc_lift[3,'confidence'],4)` | `r round(groc_lift[3,'lift'],4)`
+`r groc_lift[2,'rules']` | `r round(groc_lift[2,'support'],4)` | `r round(groc_lift[2,'confidence'],4)` | `r round(groc_lift[2,'lift'],4)`
+`r groc_lift[1,'rules']` | `r round(groc_lift[1,'support'],4)` | `r round(groc_lift[1,'confidence'],4)` | `r round(groc_lift[1,'lift'],4)`
+</center>
+
+To find surprising basket rules, allow the "support" to go to 0.1 % of the customers.  They are not frequent among customers, but when they buy the first two items, these customers are much more likely to purchase the third.  These customers are either shopping for a specific purpose, or their "stock up" trips look different from an average family shopper.  For example, customers shopping for popcorn and soda are 16.7 times more likely to need a salty snack to complete their movie nights, as compared to an average shopper.  
